@@ -1,7 +1,6 @@
 # Imports
 import streamlit as st
-from pdt_info_extractor import get_sentences, get_entities
-
+from pdt_info_extractor_new import get_sentences, get_entities, get_information
 
 # Main App
 """
@@ -16,10 +15,13 @@ if document_file is not None:
     with st.spinner("Extracting Info from the Document... Please Wait..."):
         sentences = get_sentences(document_file.name)
         entities = get_entities(sentences)
-        sentences_dict = {i: sentence for i, sentence in enumerate(sentences)}
-        entities['Context'] = entities.SentenceID.apply(lambda x: f"{sentences_dict.get(max(0, x-1))} | {sentences_dict.get(x)}")
+        information = get_information(entities)
 
     """
-    ## Extracted Details
+    ### Extracted Information
     """
-    st.table(entities)
+    st.write(information)
+    """
+    ### Extracted Entities
+    """
+    st.table(entities.iloc[:, :-1])

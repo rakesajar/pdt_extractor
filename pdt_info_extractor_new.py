@@ -72,6 +72,13 @@ def _get_passport_number(list_of_strings):
     return None
 
 
+def _get_context(list_of_strings, entities_df):
+    sentences_dict = {i: sentence for i, sentence in enumerate(list_of_strings)}
+    entities_df['Context'] = entities_df.SentenceID.apply(
+        lambda x: f"{sentences_dict.get(max(0, x - 1))} | {sentences_dict.get(x)}")
+    return entities_df
+
+
 def get_entities(list_of_strings):
     sentence_id, category, start_pos, end_pos, text, confidence_score = [], [], [], [], [], []
     for id, sentence in enumerate(list_of_strings):
@@ -103,6 +110,111 @@ def get_entities(list_of_strings):
     passport_df = _get_passport_number(list_of_strings)
     if passport_df is not None:
         entities = pd.concat([entities, passport_df])
-    entities = entities.sort_values("SentenceID")
+    entities = entities.sort_values(["SentenceID", "StartPosition"])
     entities['EntityType'] = entities.EntityType.str.upper()
+    # Get Context
+    entities = _get_context(list_of_strings, entities)
+    entities.to_csv("entities.csv", index=False)
     return entities
+
+
+def _get_name_info(entities):
+    all_names = entities[entities.EntityType == 'PERSON'].EntityText.tolist()
+    all_names_context = entities[entities.EntityType == 'PERSON'].Context.tolist()
+    name, first_name, middle_name, last_name = "", "", "", ""
+    for name, context in zip(all_names, all_names_context):
+        cleaned_context = re.sub(r'[^A-Za-z0-9 ]+', '', context).lower()
+        if 'first name' in cleaned_context.lower():
+            first_name = name
+        elif 'middle name' in cleaned_context.lower():
+            middle_name = name
+        elif 'last name' in cleaned_context.lower():
+            last_name = name
+        elif 'name' in cleaned_context.lower():
+            name = name
+    if any([first_name, middle_name, last_name]):
+        name = f"{first_name} {middle_name} {last_name}"
+        name = name.replace("  ", " ")
+        name = name.strip()
+
+    return name, all_names
+
+
+def _get_dob_info(entities):
+    all_dates = entities[entities.EntityType == 'DATE'].EntityText.tolist()
+    dob = [date for date in all_dates if '2022' not in date][0]
+    return dob, all_dates
+
+
+def _get_passport_info(entities):
+    all_passport_numbers = entities[entities.EntityType == 'PASSPORT_NUMBER'].EntityText.tolist()
+    all_passport_context = entities[entities.EntityType == 'PASSPORT_NUMBER'].Context.tolist()
+    passport_number = ""
+    for pno, pc in zip(all_passport_numbers, all_passport_context):
+        cleaned_context = re.sub(r'[^A-Za-z0-9 ]+', '', pc).lower()
+        if 'passport' in cleaned_context:
+            passport_number = pno
+    return passport_number, all_passport_numbers
+
+
+def _get_sample_date_time(entities):
+    all_dates_sentence_ids = entities[entities.EntityType == 'DATE'].SentenceID.tolist()
+    all_dates = entities[entities.EntityType == 'DATE'].EntityText.tolist()
+    all_dates_context = entities[entities.EntityType == 'DATE'].Context.tolist()
+    sample_date = ""
+    sample_date_sentence_id = ""
+    for sid, date, context in zip(all_dates_sentence_ids, all_dates, all_dates_context):
+        cleaned_context = re.sub(r'[^A-Za-z0-9 ]+', '', context).lower()
+        if 'sampling' in cleaned_context:
+            sample_date = date
+            sample_date_sentence_id = sid
+        elif 'taken on' in cleaned_context:
+            sample_date = date
+            sample_date_sentence_id = sid
+        elif 'collected' in cleaned_context:
+            sample_date = date
+            sample_date_sentence_id = sid
+    all_potential_sample_dates = [date for date in all_dates if '2022' in date]
+    sample_time = ""
+    if len(sample_date)>0:
+        all_times = entities[entities.EntityType == 'TIME'].EntityText.tolist()
+        all_potential_sample_times = entities[entities.EntityType == 'TIME']
+        all_potential_sample_times = all_potential_sample_times[all_potential_sample_times.SentenceID == sample_date_sentence_id].EntityText.tolist()
+        sample_time = all_potential_sample_times[0] if len(all_potential_sample_times)>0 else ""
+    return sample_date, all_potential_sample_dates, sample_time, all_times
+
+
+def get_information(entities):
+    # Get Name
+    name, all_names = _get_name_info(entities)
+    # Get Date of Birth
+    dob, all_dates = _get_dob_info(entities)
+    all_potential_dobs = [date for date in all_dates if '2022' not in date]
+    # Get Gender
+    gender_list = entities[entities.EntityType == 'GENDER'].EntityText.tolist()
+    gender = gender_list[0] if len(gender_list)>0 else "NA"
+    # Get Passport
+    passport_number, all_passport_numbers = _get_passport_info(entities)
+    # Test Type
+    test_type_list = entities[entities.EntityType == 'TEST_TYPE'].EntityText.tolist()
+    test_type = test_type_list[0] if len(test_type_list)>0 else "NA"
+    # Test Result
+    test_result_list = entities[entities.EntityType == 'TEST_RESULT'].EntityText.tolist()
+    test_result = test_result_list[0] if len(test_result_list) > 0 else "NA"
+    # Test Sample Collection Date and Time
+    sample_date, all_potential_sample_dates, sample_time, all_potential_sample_times = _get_sample_date_time(entities)
+    # Return Dict
+    result = {"Name": name,
+              "Date of Birth": dob,
+              "Gender": gender,
+              "Passport Number": passport_number,
+              "Test Type": test_type,
+              "Test Result": test_result,
+              "Test Sample Date": sample_date,
+              "Test Sample Time": sample_time,
+              "All Potential Names": list(set(all_names)),
+              "All Potential DOBs": list(set(all_potential_dobs)),
+              "All Potential Passport Numbers": list(set(all_passport_numbers)),
+              "All Potential Test Sample Dates": list(set(all_potential_sample_dates)),
+              "All Potential Test Sample Times": list(set(all_potential_sample_times))}
+    return result
